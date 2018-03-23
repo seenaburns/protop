@@ -16,7 +16,7 @@ Hexdumps typically look like this
 
 Which is useful, but often times I'll be looking through it with a protocol definition, like:
 
-![ip header]()
+![ip-header](https://user-images.githubusercontent.com/2801344/37809009-91de6a1c-2e0a-11e8-8b24-7e90c4e4aac5.jpeg)
 
 You can see in the above (from tcpdump), some of this information is parsed out (like fragment id =
 37103). It'd be convenient to have a tool that, given a spec and a hexdump, would parse out the
