@@ -1,6 +1,6 @@
 # Proto Parser
 
-Usage: `protop "4 4 8 16 16 1 1 1 13 bits" path/to/hexdump
+Usage: `protop "4 4 8 16 16 1 1 1 13 bits" path/to/hexdump`
 
 ## Motivation
 
