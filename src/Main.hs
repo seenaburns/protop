@@ -3,7 +3,13 @@ module Main where
 import qualified System.Environment
 import qualified System.Exit
 import Data.Maybe
+import Data.Char
 import Text.Read
+
+import qualified Data.Word
+import qualified Data.ByteString.Lazy as BS
+import qualified Data.ByteString.Builder as BSB
+import qualified Data.ByteString.Internal as BS (c2w, w2c)
 
 main :: IO ()
 main = do
@@ -35,6 +41,11 @@ usage = putStrLn "Usage: protop [-h] \"spec string\" path/to/data" >> System.Exi
 type Error = String
 newtype Parser a = MakeParser { run :: String -> (String, Either Error a)}
 
+instance Functor Parser where
+  fmap f (MakeParser pf) = MakeParser $ \s -> case pf s of
+    (s2, either) -> (s2, fmap f either)
+
+
 -- Consume one character, return tail with parsed char or error
 satisfy :: (Char -> Bool) -> Parser Char
 satisfy f = MakeParser $ \s -> case s of
@@ -64,6 +75,12 @@ orParser :: Parser a -> Parser a -> Parser a
 orParser (MakeParser f1) (MakeParser f2) = MakeParser $ \s -> case f1 s of
   (_, Left err) -> f2 s
   x -> x
+
+-- Try parsers (in order), return first that succeeds
+-- Like or parser, but takes a list of parsers
+anyParser :: [Parser a] -> Parser a
+anyParser [] = MakeParser (\x -> (x, Left "Failed to parse, anyParser with no parsers"))
+anyParser (p:ps) = foldr (orParser) p ps
 
 -- Match 0 or more
 zeroOrMore :: Parser a -> Parser [a]
@@ -96,19 +113,20 @@ andThen (MakeParser fa) (MakeParser fb) = MakeParser joined
         (s3, Right b) -> (s3, Right (a,b))
 
 takeFirst :: Parser (a,b) -> Parser a
-takeFirst (MakeParser f) = MakeParser $ \s -> case f s of
+takeFirst p = fmap fst p
+
+takeSecond :: Parser (a,b) -> Parser b
+takeSecond p = fmap snd p
+
+castParser :: (Show a) => (a -> Maybe b) -> Parser a -> Parser b
+castParser castF (MakeParser f) = MakeParser $ \s -> case f s of
   (s2, Left err) -> (s2, Left err)
-  (s2, Right ab) -> (s2, Right (fst ab))
+  (s2, Right as) -> case (castF as) of
+      Just x -> (s2, Right x)
+      Nothing -> (s2, Left ("Failed to cast '" ++  (show as)))
 
 castInt :: Parser String -> Parser Integer
-castInt (MakeParser f) = MakeParser $ \s -> case f s of
-  (s2, Left err) -> (s2, Left err)
-  (s2, Right as) ->
-    let
-      maybeInt = readMaybe as :: Maybe Integer
-    in case maybeInt of
-      Just i -> (s2, Right i)
-      Nothing -> (s2, Left ("Failed to cast '" ++ as ++  "' to int"))
+castInt = castParser (\as -> readMaybe as :: Maybe Integer)
 
 matchDigit = satisfy (`elem` ['0','1'..'9'])
 matchSpace = satisfy (== ' ')
@@ -127,3 +145,58 @@ parseItems = oneOrMore (takeFirst (parseInt `andThen` matchSpace))
 -- Reads spec: "4 4 8 8 bits" into ([4, 4, 8, 8], "bits")
 parseSpec :: Parser ([Integer], String)
 parseSpec = parseItems `andThen` matchUnit
+
+matchHex = satisfy (`elem` "01234567890ABCDEFabcdef")
+
+-- Parse hex will read hex values (casting to int) and ignore spaces
+parseHex :: Parser [Integer]
+parseHex =
+  let parseHexAndIgnoreSpace = takeFirst (andThen matchHex (zeroOrMore matchSpace))
+  in
+    zeroOrMore $ castHex parseHexAndIgnoreSpace
+castHex = castParser (\a -> readMaybeHex (Data.Char.toUpper a))
+
+-- fromIntegral casts from Int -> Word8, then BS.pack makes into a bytestring
+parseHexToByteString :: Parser BS.ByteString
+parseHexToByteString = BS.pack <$> hexDigitsToWord8 <$> parseHex
+
+-- After parsing hex into digits, we'd like to convert it into a bytestring (byte array)
+-- Each hex digit corresponds to 4 bits, so we want to read 2 digits at a time for each byte
+-- Note, in the case of odd digits, the highest hex digit should be treated as 0* not the lowest.
+-- For a simple workaround, reverse, recursively parse two hex digits at a type, then reverse aagain
+hexDigitsToWord8 :: [Integer] -> [Data.Word.Word8]
+hexDigitsToWord8 = reverse . f . reverse
+  where
+    f :: [Integer] -> [Data.Word.Word8]
+    f [] = []
+    f [x] = [fromIntegral x]
+    f (x1:x2:xs) = [fromIntegral (x1 + x2 * 16)] ++ f xs
+
+readMaybeHex :: Char -> Maybe Integer
+readMaybeHex '0' = Just 0
+readMaybeHex '1' = Just 1
+readMaybeHex '2' = Just 2
+readMaybeHex '3' = Just 3
+readMaybeHex '4' = Just 4
+readMaybeHex '5' = Just 5
+readMaybeHex '6' = Just 6
+readMaybeHex '7' = Just 7
+readMaybeHex '8' = Just 8
+readMaybeHex '9' = Just 9
+readMaybeHex 'A' = Just 10
+readMaybeHex 'B' = Just 11
+readMaybeHex 'C' = Just 12
+readMaybeHex 'D' = Just 13
+readMaybeHex 'E' = Just 14
+readMaybeHex 'F' = Just 15
+readMaybeHex x = Nothing
+
+---------------------------------------------------------------------
+-- Bytestring
+
+showBytestringHex :: BS.ByteString -> String
+showBytestringHex bs =
+  let bshex = (map BS.w2c) . BS.unpack . BSB.toLazyByteString . BSB.lazyByteStringHex
+  in "0x" ++ (bshex bs)
+
+
