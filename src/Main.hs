@@ -5,8 +5,9 @@ import qualified System.Exit
 import Data.Maybe
 import Data.Char
 import Text.Read
+import Data.Bits
 
-import qualified Data.Word
+import Data.Word
 import qualified Data.ByteString.Lazy as BS
 import qualified Data.ByteString.Builder as BSB
 import qualified Data.ByteString.Internal as BS (c2w, w2c)
@@ -199,4 +200,57 @@ showBytestringHex bs =
   let bshex = (map BS.w2c) . BS.unpack . BSB.toLazyByteString . BSB.lazyByteStringHex
   in "0x" ++ (bshex bs)
 
+slice :: Integer -> Integer -> BS.ByteString -> BS.ByteString
+slice start end = (BS.drop $ fromIntegral start) . (BS.take (fromIntegral $ end))
 
+sliceBits :: Integer -> Integer -> BS.ByteString -> BS.ByteString
+sliceBits start end =
+  let
+    (startByte, endByte) = bitIndexToByteIndex (start,end)
+  in
+    slice startByte endByte
+
+sliceBits2 :: Integer -> Integer -> BS.ByteString -> BS.ByteString
+sliceBits2 start end bytes =
+  let
+    bits = byteStringToBitString bytes
+    sliced = drop (fromIntegral start) $ take (fromIntegral end) bits
+  in
+    bitStringToByteString sliced
+
+bitIndexToByteIndex :: (Integer, Integer) -> (Integer, Integer)
+bitIndexToByteIndex (start,end) =
+  let
+    startByte = toInteger $ floor $ (fromInteger start :: Float) / 8
+    endByte = toInteger $ ceiling $ (fromInteger end :: Float) / 8
+  in
+    (startByte, endByte)
+
+
+byteStringToBitString :: BS.ByteString -> [Bool]
+byteStringToBitString bs = concatMap word8ToBits (BS.unpack bs)
+
+bitStringToByteString :: [Bool] -> BS.ByteString
+bitStringToByteString = BS.pack . toWords
+
+toWords :: [Bool] -> [Word8]
+toWords [] = []
+toWords bs =
+  [bitsToWord8 (take 8 bs)] ++ (toWords (drop 8 bs))
+
+-- word8ToBits and bitsToWord8 reverse to keep Big Endian
+word8ToBits :: Data.Word.Word8 -> [Bool]
+word8ToBits w =
+  let
+    wordWithIndex = zip [0..] $ replicate 8 w
+    nthBit = \x -> testBit (snd x) (fst x)
+  in
+    reverse $ fmap nthBit wordWithIndex
+
+bitsToWord8 :: [Bool] -> Data.Word.Word8
+bitsToWord8 bs =
+  let
+    filledWithIndex = zip [0..] $ reverse $ replicate (8 - length bs) False ++ bs
+    inner = \(i,b) acc -> if b then setBit acc i else acc
+  in
+    foldr inner (fromIntegral 0 :: Word8) filledWithIndex
